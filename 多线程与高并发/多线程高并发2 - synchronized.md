@@ -1,3 +1,7 @@
+---
+
+---
+
 # Synchronized
 
 本篇内容将全方位讲述synchronized关键字的实现，并拓展与其相关的知识。
@@ -46,8 +50,29 @@ CAS 全称 Compare And Swap (又称Compare And Exchange) / 自旋 / 自旋锁 / 
 
 讲到Java的markword那就必须要讲到Java对象的内存布局了。
 
-当我们创建一个对象，对象信息会被jvm写入内存，对象在内存中的分布如下图
+当我们创建一个对象，对象信息会被jvm写入内存，对象在内存中的分布如下图**（以下是64位的jvm环境，默认开启压缩指针的情况）**
 
 
 
 ![markword](https://raw.githubusercontent.com/Rooooy7/java-boost/master/img/markword.png)
+
+## 8字节对齐
+
+**我们称markword+class pointer = 12Byte ，这12字节可以称作object header。它管理着一个对象的各种属性状态。**object header后面的内容则是对象的成员变量。
+
+JVM对内存的管理有8字节对齐的要求，所以我们可以看到1、3图中都因为原始内容不足8*倍而进行了补齐填充。
+
+但是他们的情况有点不一样，一个是在类成员后面补充，一个则是在class pointer和long类型成员间补充。所以对齐填充是有2种情况的，这个也是我偶然发现的。。具体补齐的实现我没有去查看细节，这个不作为重点讨论。
+
+## Markword的位数对应关系
+
+刚刚谈到了**我们称markword+class pointer = 12Byte ，这12字节可以称作object header。它管理着一个对象的各种属性状态。**
+
+现在具体来讲讲每一位都对应着这个对象的什么信息	
+
+![markword-bit](https://raw.githubusercontent.com/Rooooy7/java-boost/master/img/markword-bit.png)
+
+
+
+
+
