@@ -1,7 +1,3 @@
----
-
----
-
 # Synchronized
 
 本篇内容将全方位讲述synchronized关键字的实现，并拓展与其相关的知识。
@@ -83,16 +79,17 @@ JVM对内存的管理有8字节对齐的要求，所以我们可以看到1、3�
   -  **0 0 1：**无锁，新对象
 
   -  **1 0 1：**偏向锁
-
 -  **0 0** ：自旋锁
-
 -  **1 0** ：重量级锁
-
 -  **1 1** ：GC标记
 
-## 锁升级
 
-要理解markword中的各种锁，先要理解synchronized锁升级的过程。
+
+# 锁升级
+
+synchronized优化的过程和markword息息相关
+
+markword上面已经看过了每一位的表示意义，现在来理解synchronized锁升级的过程。
 
 ![lock-upgrade](https://raw.githubusercontent.com/Rooooy7/java-boost/master/img/lock-upgrade.png)
 
@@ -106,20 +103,20 @@ JVM对内存的管理有8字节对齐的要求，所以我们可以看到1、3�
 
 - 轻量级锁
 
-  又称自旋锁，偏向锁在轻度竞争时会撤销偏向锁，升级轻量级锁，也有可能从普通对象直接升级为轻量级锁。如果产生了竞争，竞争的线程们会生成一个Lock Record于自己的线程栈中，并用CAS操作将markword设置为指向自己线程的LockRecord的指针，设置成功者得到锁。其余的线程继续自旋（不断尝试获得锁）。
+  又称自旋锁，偏向锁在轻度竞争时会撤销偏向锁，升级轻量级锁，也有可能从普通对象直接升级为轻量级锁。如果产生了竞争，竞争的线程们会生成一个Lock Record于自己的线程栈中，并用CAS操作将markword设置为指向自己线程的LockRecord的指针，设置成功者得到锁。其余没有获取到锁的线程继续自旋。
 
 - 重量级锁
 
-  竞争加剧，有线程超过10次自旋，（ 由-XX:PreBlockSpin控制自旋次数，默认为10）， 或者自旋线程数超过CPU核数的一半，升级重量级锁，向操作系统申请资源， CPU从3级-0级系统调用，线程挂起，进入等待队列，等待操作系统的调度，然后再映射回用户空间（JAVA1.6之后，加入自适应自旋， JVM自己控制锁升级）
+  竞争加剧，有线程超过10次自旋，（ 由-XX:PreBlockSpin控制自旋次数，默认为10）， 或者自旋线程数超过CPU核数的一半，升级重量级锁，向操作系统申请资源， CPU从3级到0级系统调用，线程挂起，进入等待队列，等待操作系统的调度，然后再映射回用户空间（JAVA1.6之后，加入自适应自旋， JVM自己控制锁升级）
   
 
 
 
 **为什么有自旋锁还需要重量级锁？**
 
-> 自旋是消耗CPU资源的，如果锁的时间长，或者自旋线程多，CPU会被大量消耗
+> 自旋是消耗CPU资源的，如果锁的时间长，或者自旋线程多，CPU资源会被大量消耗
 >
-> 重量级锁有等待队列，所有拿不到锁的进入等待队列，不需要消耗CPU资源
+> 重量级锁（ObjectMonitor）有等待队列（WaitSet），所有拿不到锁的进入等待队列，不需要消耗CPU资源
 
 **偏向锁是否一定比自旋锁效率高？**
 
@@ -127,7 +124,13 @@ JVM对内存的管理有8字节对齐的要求，所以我们可以看到1、3�
 >
 > JVM启动过程，会有很多线程竞争（明确），所以默认情况启动时不打开偏向锁，过一段儿时间再打开
 
-## 锁重入
+**如果计算过对象的hashCode，则对象无法进入偏向状态！**
+
+> 轻量级锁重量级锁的hashCode存在与什么地方？
+>
+> 答案：线程栈中，轻量级锁的LockRecord中，或是代表重量级锁的ObjectMonitor的成员中
+
+# 锁重入
 
 可重入锁，它的可重入性表现在同一个线程可以多次获得锁。
 
@@ -135,9 +138,46 @@ JVM对内存的管理有8字节对齐的要求，所以我们可以看到1、3�
 
 而且重入的次数必须被记录，因为解锁需要对应的重入次数。
 
-偏向锁/轻量级锁：记录重入次数在线程栈中，每多一次重入LockRecord就会创建多一个，解锁时则删除LockRecord
-
-重量级锁：与上面类似的操作，记录到ObjectMonitor
-
+- 偏向锁/轻量级锁：记录重入次数在线程栈中，每多一次重入LockRecord就会创建多一个，解锁时则删除LockRecord
+- 重量级锁：与上面类似的操作，锁重入信息记录到ObjectMonitor
 
 
+
+# synchronized vs Lock (CAS)
+
+```assembly
+ 在高争用 高耗时的环境下synchronized效率更高
+ 在低争用 低耗时的环境下CAS效率更高
+ synchronized到重量级之后是等待队列（不消耗CPU）
+ CAS（等待期间消耗CPU）
+```
+
+
+
+# 锁消除 lock eliminate
+
+```java
+public void add(String str1,String str2){
+         StringBuffer sb = new StringBuffer();
+         sb.append(str1).append(str2);
+}
+```
+
+我们都知道 StringBuffer 是线程安全的，因为它的关键方法都是被 synchronized 修饰过的，但我们看上面这段代码，我们会发现，sb 这个引用只会在 add 方法中使用，不可能被其它线程引用（因为是局部变量，栈私有），因此 sb 是不可能共享的资源，JVM 会自动消除 StringBuffer 对象内部的锁。
+
+# 锁粗化 lock coarsening
+
+```java
+public String test(String str){
+       
+       int i = 0;
+       StringBuffer sb = new StringBuffer():
+       while(i < 100){
+           sb.append(str);
+           i++;
+       }
+       return sb.toString():
+}
+```
+
+JVM 会检测到这样一连串的操作都对同一个对象加锁（while 循环内 100 次执行 append，没有锁粗化的就要进行 100  次加锁/解锁），此时 JVM 就会将加锁的范围粗化到这一连串的操作的外部（比如 while 体外），使得这一连串操作只需要加一次锁即可。
